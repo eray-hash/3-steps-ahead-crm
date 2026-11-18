@@ -1,0 +1,228 @@
+import { useState } from 'react'
+import { DreiSaeulenKarte } from '../../components/DreiSaeulenKarte'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
+import { useApp } from '../../context/AppContext'
+import { StatusWidget } from '../../components/StatusWidget'
+import { Card, Modal, EmptyState } from '../../components/ui'
+import { FollowUpForm } from '../../components/FollowUpEditor'
+import { fmtDate, isOverdue } from '../../lib/dates'
+import { PRIORITAETEN } from '../../data/constants'
+import { ERBEN_CHECKLISTE } from '../../data/seedErben'
+import { FormularLinkButtons } from '../../components/FormularLink'
+import { ZugewieseneObjekte } from '../../components/ZugewieseneObjekte'
+import { GespraechsprotokolleSection } from '../../components/GespraechsprotokolleSection'
+import { PotenzialAnalyseSection } from '../../components/PotenzialAnalyseSection'
+import { KaeuferprofilSection } from '../../components/KaeuferprofilSection'
+import { UnternehmensbewertungSection } from '../../components/UnternehmensbewertungSection'
+import { StammdatenWarnungBanner } from '../../components/StammdatenWarnungBanner'
+import { StammdatenKarte } from '../../components/StammdatenKarte'
+import { AktivitaetenTimeline } from '../../components/AktivitaetenTimeline'
+import { KundeHinweise } from '../../components/PruefHinweisBadge'
+import { SelbstauskunftSection } from '../../components/SelbstauskunftSection'
+import { NdaSection } from '../../components/NdaSection'
+import { DokumenteSection } from '../../components/DokumenteSection'
+import { KommunikationSection } from '../../components/KommunikationSection'
+import { LoeschenKundeButton } from '../../components/LoeschenKundeButton'
+import { AktenReiter } from '../../components/AktenReiter'
+import type { Prioritaet } from '../../types'
+
+const TABS = [
+  { id: 'uebersicht', label: 'Übersicht' },
+  { id: 'unterlagen', label: 'Unterlagen-Checkliste' },
+  { id: 'protokolle', label: 'Gesprächsprotokolle' },
+  { id: 'nda', label: 'Vertraulichkeit' },
+  { id: 'dokumente', label: 'Dokumente' },
+  { id: 'kommunikation', label: 'Kommunikation' },
+]
+
+export function ErbenDetail() {
+  const { id } = useParams()
+  const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
+  const { state, dispatch } = useApp()
+  const [editFollowUp, setEditFollowUp] = useState(false)
+
+  const mandant = state.erbenMandanten.find((k) => k.id === id)
+  const tab = params.get('tab') ?? 'uebersicht'
+
+  if (!mandant) {
+    return (
+      <div>
+        <button onClick={() => navigate('/erben')} className="mb-4 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
+          <ArrowLeft size={14} /> Zurück
+        </button>
+        <EmptyState text="Mandant nicht gefunden." />
+      </div>
+    )
+  }
+
+  const overdue = isOverdue(mandant.followUp.date, mandant.followUp.done)
+  const checkliste = mandant.unterlagenCheckliste ?? {}
+
+  function toggleCheck(key: string) {
+    if (!mandant) return
+    dispatch({
+      type: 'UPDATE_ERBEN_MANDANT',
+      id: mandant.id,
+      patch: { unterlagenCheckliste: { ...checkliste, [key]: !checkliste[key] } },
+    })
+  }
+
+  const alleItems = ERBEN_CHECKLISTE.flatMap((g) => g.punkte)
+  const erledigtCount = alleItems.filter((_, i) => checkliste[alleItems[i]]).length
+
+  return (
+    <div>
+      <button onClick={() => navigate('/erben')} className="mb-4 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
+        <ArrowLeft size={14} /> Zurück zur Mandantenliste
+      </button>
+
+      <Card className="mb-5 p-5">
+        <StammdatenWarnungBanner kunde={mandant} />
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-semibold text-slate-800">{mandant.firma}</h1>
+            <p className="text-sm text-slate-500">{mandant.ansprechpartner} · {mandant.email} · {mandant.telefon}</p>
+            <KundeHinweise bereich="erben" kunde={mandant} />
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={mandant.prioritaet}
+              onChange={(e) => dispatch({ type: 'SET_ERBEN_PRIORITAET', id: mandant.id, prioritaet: e.target.value as Prioritaet })}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium"
+            >
+              {PRIORITAETEN.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <LoeschenKundeButton bereich="erben" kundeId={mandant.id} kundeName={mandant.firma} listePfad="/erben" />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-6 border-t border-slate-100 pt-4">
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-400">Status</div>
+            <StatusWidget bereich="erben" status={mandant.status} onChange={(next) => dispatch({ type: 'SET_ERBEN_STATUS', id: mandant.id, status: next })} />
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-400">Wiedervorlage</div>
+            <button onClick={() => setEditFollowUp(true)} className="text-left">
+              <div className={`text-sm ${overdue ? 'font-medium text-rose-600' : 'text-slate-700'}`}>{fmtDate(mandant.followUp.date)} {overdue && '· überfällig'}</div>
+              <div className="text-xs text-slate-400">{mandant.followUp.note}</div>
+            </button>
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-400">Verantwortlich</div>
+            <div className="text-sm text-slate-700">{mandant.verantwortlich}</div>
+          </div>
+        </div>
+      </Card>
+
+      <AktenReiter
+        reiter={TABS.map((t) => (t.id === 'unterlagen' ? { ...t, zusatz: `(${erledigtCount}/${alleItems.length})` } : t))}
+        aktiv={tab}
+        onWaehle={(id) => setParams({ tab: id })}
+      />
+
+      {tab === 'uebersicht' && <DreiSaeulenKarte kundeId={mandant.id} />}
+
+      {tab === 'uebersicht' && (
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+          <Card className="p-5 lg:col-span-1">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Stammdaten</h3>
+            <StammdatenKarte bereich="erben" kunde={mandant} labels={{ firma: 'Mandant/Familie' }} />
+            <div className="mt-4 rounded-lg bg-slate-50 p-3">
+              <div className="text-xs font-medium text-slate-400">Nächste Wiedervorlage</div>
+              <div className={`text-sm ${overdue ? 'font-medium text-rose-600' : 'text-slate-700'}`}>{fmtDate(mandant.followUp.date)} — {mandant.followUp.note}</div>
+            </div>
+            <div className="mt-4 border-t border-slate-100 pt-4">
+              <div className="mb-1.5 text-xs font-medium text-slate-400">Allgemeine Vollmacht digital versenden</div>
+              <FormularLinkButtons pfad={`/formular/vollmacht/erben/${mandant.id}`} />
+            </div>
+            <div className="mt-3">
+              <div className="mb-1.5 text-xs font-medium text-slate-400">Mandantenfragebogen digital versenden</div>
+              <FormularLinkButtons pfad={`/formular/mandantenfragebogen/erben/${mandant.id}`} />
+            </div>
+          </Card>
+          <Card className="p-5 lg:col-span-2">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Aktivitäten-Timeline</h3>
+            <AktivitaetenTimeline bereich="erben" kunde={mandant} />
+          </Card>
+
+          {mandant.signaturen && mandant.signaturen.length > 0 && (
+            <Card className="p-5 lg:col-span-3">
+              <h3 className="mb-3 text-sm font-semibold text-slate-700">Erfasste Unterschriften</h3>
+              <div className="flex flex-wrap gap-4">
+                {mandant.signaturen.map((s) => (
+                  <div key={s.id} className="rounded-lg border border-slate-200 p-3">
+                    <img src={s.dataUrl} alt={`Unterschrift ${s.name}`} className="h-20 rounded bg-white" />
+                    <div className="mt-1.5 text-xs text-slate-500">{s.kontext}</div>
+                    <div className="text-xs text-slate-400">{s.name} · {fmtDate(s.datum)}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          <ZugewieseneObjekte bereich="erben" kundeId={mandant.id} />
+        </div>
+      )}
+
+      {tab === 'unterlagen' && (
+        <Card className="p-5">
+          <p className="mb-4 text-sm text-slate-500">
+            Checkliste aus dem Mandantenfragebogen „Vermögens-, Familien- und Nachfolgeplanung" — hier wird festgehalten,
+            welche Angaben/Unterlagen vom Mandanten bereits vorliegen.
+          </p>
+          <div className="space-y-5">
+            {ERBEN_CHECKLISTE.map((gruppe) => (
+              <div key={gruppe.kategorie}>
+                <h4 className="mb-2 text-sm font-semibold text-slate-700">{gruppe.kategorie}</h4>
+                <div className="space-y-1.5">
+                  {gruppe.punkte.map((punkt) => (
+                    <label key={punkt} className="flex items-start gap-2 text-sm text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={!!checkliste[punkt]}
+                        onChange={() => toggleCheck(punkt)}
+                        className="mt-0.5 rounded"
+                      />
+                      <span className={checkliste[punkt] ? 'text-slate-400 line-through' : ''}>{punkt}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {tab === 'protokolle' && <GespraechsprotokolleSection bereich="erben" kundeId={mandant.id} kundeName={mandant.ansprechpartner} />}
+
+      {tab === 'potenzial' && <PotenzialAnalyseSection bereich="erben" kundeId={mandant.id} kundeName={mandant.ansprechpartner} />}
+
+      {tab === 'kaeuferprofil' && <KaeuferprofilSection bereich="erben" kundeId={mandant.id} kundeName={mandant.ansprechpartner} />}
+      {tab === 'bewertung' && <UnternehmensbewertungSection bereich="erben" kundeId={mandant.id} />}
+
+      {tab === 'selbstauskunft' && <SelbstauskunftSection bereich="erben" kundeId={mandant.id} kundeName={mandant.ansprechpartner} />}
+
+      {tab === 'nda' && <NdaSection bereich="erben" kundeId={mandant.id} />}
+
+      {tab === 'dokumente' && <DokumenteSection bereich="erben" kundeId={mandant.id} />}
+
+      {tab === 'kommunikation' && <KommunikationSection kundeId={mandant.id} />}
+
+      <Modal open={editFollowUp} onClose={() => setEditFollowUp(false)} title="Wiedervorlage bearbeiten">
+        <FollowUpForm
+          date={mandant.followUp.date}
+          note={mandant.followUp.note}
+          done={mandant.followUp.done}
+          onSubmit={(followUp) => {
+            dispatch({ type: 'SET_ERBEN_FOLLOWUP', id: mandant.id, followUp })
+            setEditFollowUp(false)
+          }}
+        />
+      </Modal>
+    </div>
+  )
+}
+

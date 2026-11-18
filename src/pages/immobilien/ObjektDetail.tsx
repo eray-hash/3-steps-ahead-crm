@@ -1,0 +1,881 @@
+import { useEffect, useState } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, Folder, FolderOpen, File, Upload, Plus, Radar, ExternalLink, Users, Sparkles, CheckCircle2, XCircle, Trash2, Send } from 'lucide-react'
+import { useApp, type AppData } from '../../context/AppContext'
+import { StatusWidget } from '../../components/StatusWidget'
+import { Card, Modal, Field, inputClass, PrimaryButton, SecondaryButton, EmptyState, StatusBadge } from '../../components/ui'
+import { FormularLinkButtons } from '../../components/FormularLink'
+import { KUNDEN_BEREICHE, kundeBereichLabel, kundeDetailPfad } from '../../data/kundenBereiche'
+import { useBereichsRechte } from '../../lib/bereichsRechte'
+import { alleGesuche, budgetText, eckdatenTexte, passendeGesuche } from '../../lib/gesuche'
+import { fmtDate, isOverdue, today, uid, fmtEUR } from '../../lib/dates'
+import { PRIORITAETEN, gruppeLabel, LUKRATIVITAET_COLOR } from '../../data/constants'
+import { DOKUMENT_ORDNER } from '../../types'
+import type { DokumentOrdnerName, Prioritaet, FinanzierungStatus, KundeBereich, Dokument } from '../../types'
+import { pruefeUnterlagenVollstaendigkeit } from '../../data/objektUnterlagenPflicht'
+import { ladeObjektDokumentHoch, erzeugeDownloadUrl, leseAlsBase64, loescheObjektDokument } from '../../lib/objektDokumenteStorage'
+import { brauchtDateiLink, classifyObjektDokument, generateExpose, holeAnhangUrl, isEmailGatewayConfigured, schreibeObjektTextNachAnweisung } from '../../lib/emailGateway'
+import type { Objekt } from '../../types'
+import { ObjektVerkaufsdatenblatt } from '../../components/ObjektVerkaufsdatenblatt'
+import { ObjektKurzpruefungBlatt } from '../../components/ObjektKurzpruefungBlatt'
+import { ObjektFragenSection } from '../../components/ObjektFragenSection'
+import { ObjektWeitergabenSection } from '../../components/ObjektWeitergabenSection'
+import { ObjektAbrechnungSection } from '../../components/ObjektAbrechnungSection'
+import { ObjektUnterlagenAnfordern } from '../../components/ObjektUnterlagenAnfordern'
+import { ObjektBewertungSection } from '../../components/ObjektBewertungSection'
+import { ExposePdfKnopf } from '../../components/ExposePdf'
+import { ObjektAnGesucheSenden } from '../../components/ObjektAnGesucheSenden'
+
+const TABS = [
+  { id: 'uebersicht', label: 'Übersicht' },
+  { id: 'verkaufsdaten', label: 'Verkaufsdatenblatt' },
+  { id: 'kurzpruefung', label: 'Kurzprüfung' },
+  { id: 'bewertung', label: 'Bewertung' },
+  { id: 'fragen', label: 'Fragen' },
+  { id: 'weitergaben', label: 'Weitergaben' },
+  { id: 'abrechnung', label: 'Abrechnung' },
+  { id: 'dokumente', label: 'Dokumente' },
+  { id: 'finanzierung', label: 'Finanzierung' },
+  { id: 'vorschlaege', label: 'Gesuche & Vorschläge' },
+]
+
+const VORSCHLAG_STATUS_LABEL: Record<string, string> = { offen: 'Offen', akzeptiert: 'Angenommen', abgelehnt: 'Abgelehnt' }
+const VORSCHLAG_STATUS_COLOR: Record<string, string> = {
+  offen: 'bg-slate-100 text-slate-600',
+  akzeptiert: 'bg-emerald-100 text-emerald-700',
+  abgelehnt: 'bg-rose-100 text-rose-700',
+}
+
+export function ObjektDetail() {
+  const { id } = useParams()
+  const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
+  const { state, dispatch } = useApp()
+  const [finOpen, setFinOpen] = useState(false)
+  const [vorschlagOpen, setVorschlagOpen] = useState(false)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [anGesucheOpen, setAnGesucheOpen] = useState(false)
+  const [oeffneFehler, setOeffneFehler] = useState('')
+
+  const objekt = state.objekte.find((o) => o.id === id)
+  const tab = params.get('tab') ?? 'uebersicht'
+  const ordner = params.get('ordner') as DokumentOrdnerName | null
+
+  if (!objekt) {
+    return (
+      <div>
+        <button onClick={() => navigate('/immobilien')} className="mb-4 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
+          <ArrowLeft size={14} /> Zurück
+        </button>
+        <EmptyState text="Objekt nicht gefunden." />
+      </div>
+    )
+  }
+
+  const overdue = isOverdue(objekt.followUp.date, objekt.followUp.done)
+  const finanzierungen = state.finanzierungen.filter((f) => f.objektId === objekt.id)
+  const vorschlaege = state.objektVorschlaege.filter((v) => v.objektId === objekt.id)
+  // Wer sucht so etwas? Abgleich des Objekts gegen alle erfassten Gesuche.
+  const gesuchTreffer = passendeGesuche(objekt, alleGesuche(state))
+  const objektId = objekt.id
+
+  function setTab(t: string) {
+    setParams({ tab: t })
+  }
+
+  function openOrdner(name: DokumentOrdnerName) {
+    setParams({ tab: 'dokumente', ordner: name })
+  }
+
+  function dokumentGespeichert(zielOrdner: DokumentOrdnerName, dokument: Dokument) {
+    dispatch({ type: 'ADD_DOKUMENT', objektId, ordner: zielOrdner, dokument })
+  }
+
+  async function dokumentOeffnen(d: Dokument) {
+    if (!d.url) return
+    setOeffneFehler('')
+    // Fenster sofort öffnen (sonst blockt der Browser es nach dem Warten), Adresse danach setzen.
+    const fenster = window.open('', '_blank')
+    try {
+      // Aus den ungeklärten Eingängen abgelegte Dateien bleiben in der gemeinsamen Ablage (das Objekt verweist nur darauf).
+      const url = brauchtDateiLink(d.url) ? await holeAnhangUrl(d.url) : await erzeugeDownloadUrl(d.url)
+      if (fenster) fenster.location.href = url
+      else window.location.href = url
+    } catch (err) {
+      fenster?.close()
+      setOeffneFehler(err instanceof Error ? err.message : 'Datei konnte nicht geöffnet werden.')
+    }
+  }
+
+  // Aufräumen der Ablage: eine Datei in einen anderen Ordner dieses Objekts legen oder ganz löschen.
+  const ablage = objekt.dokumente
+  function dokumentVerschieben(d: Dokument, von: DokumentOrdnerName, nach: DokumentOrdnerName) {
+    if (von === nach) return
+    const dokumente = { ...ablage }
+    dokumente[von] = (dokumente[von] ?? []).filter((x) => x.id !== d.id)
+    dokumente[nach] = [...(dokumente[nach] ?? []).filter((x) => x.id !== d.id), d]
+    dispatch({ type: 'UPDATE_OBJEKT', id: objektId, patch: { dokumente } })
+  }
+
+  async function dokumentLoeschen(d: Dokument, von: DokumentOrdnerName) {
+    // Eine Datei aus der gemeinsamen Ablage gehört nicht allein diesem Objekt: Nur der Eintrag verschwindet hier.
+    const gemeinsam = !!d.url && brauchtDateiLink(d.url)
+    const frage = gemeinsam
+      ? `„${d.name}" aus diesem Objekt entfernen? Die Datei selbst bleibt in der gemeinsamen Ablage erhalten.`
+      : `„${d.name}" endgültig löschen? Die Datei wird auch aus der Ablage entfernt.`
+    if (!window.confirm(frage)) return
+    if (d.url && !gemeinsam) await loescheObjektDokument(d.url).catch(() => undefined)
+    dispatch({ type: 'UPDATE_OBJEKT', id: objektId, patch: { dokumente: { ...ablage, [von]: (ablage[von] ?? []).filter((x) => x.id !== d.id) } } })
+  }
+
+  const unterlagenCheck = pruefeUnterlagenVollstaendigkeit(objekt)
+
+  return (
+    <div>
+      <button onClick={() => navigate('/immobilien')} className="mb-4 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
+        <ArrowLeft size={14} /> Zurück zur Objektliste
+      </button>
+
+      <Card className="mb-5 p-5">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-semibold text-slate-800">{objekt.bezeichnung}</h1>
+            <p className="text-sm text-slate-500">{objekt.adresse} · {gruppeLabel(objekt.gruppe)} · {objekt.typ}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {objekt.quelle === 'immoradar' && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-accent-50 px-2.5 py-0.5 text-xs font-medium text-accent-700">
+                  <Radar size={12} /> Aus ImmoRadar
+                </span>
+              )}
+              {objekt.lukrativitaet && (
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${LUKRATIVITAET_COLOR[objekt.lukrativitaet] ?? 'bg-slate-100 text-slate-600'}`}>
+                  {objekt.lukrativitaet}
+                </span>
+              )}
+              {objekt.immoRadarLink && (
+                <a href={objekt.immoRadarLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-accent-600 underline">
+                  <ExternalLink size={11} /> Original-Inserat
+                </a>
+              )}
+              {objekt.zugewiesenerKunde && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+                  <Users size={12} /> Zugewiesen: {objekt.zugewiesenerKunde.kundeName} ({kundeBereichLabel(objekt.zugewiesenerKunde.bereich)})
+                </span>
+              )}
+            </div>
+          </div>
+          <select
+            value={objekt.prioritaet}
+            onChange={(e) => dispatch({ type: 'SET_OBJEKT_PRIORITAET', id: objekt.id, prioritaet: e.target.value as Prioritaet })}
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium"
+          >
+            {PRIORITAETEN.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-6 border-t border-slate-100 pt-4">
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-400">Status</div>
+            <StatusWidget bereich="immobilien" status={objekt.status} onChange={(next) => dispatch({ type: 'SET_OBJEKT_STATUS', id: objekt.id, status: next })} />
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-400">Wiedervorlage</div>
+            <div className={`text-sm ${overdue ? 'font-medium text-rose-600' : 'text-slate-700'}`}>{fmtDate(objekt.followUp.date)} {overdue && '· überfällig'}</div>
+            <div className="text-xs text-slate-400">{objekt.followUp.note}</div>
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-400">Verantwortlich</div>
+            <div className="text-sm text-slate-700">{objekt.verantwortlich}</div>
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-400">Kaufpreis</div>
+            <div className="text-sm text-slate-700">{fmtEUR(objekt.kaufpreis)}</div>
+          </div>
+        </div>
+      </Card>
+
+      <div className="mb-4 flex gap-1 overflow-x-auto border-b border-slate-200">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium ${tab === t.id ? 'border-accent-600 text-accent-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'uebersicht' && (
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+          <Card className="p-5 lg:col-span-1">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Stammdaten</h3>
+            <dl className="space-y-2 text-sm">
+              <Row label="Bezeichnung" value={objekt.bezeichnung} />
+              <Row label="Adresse" value={objekt.adresse} />
+              <Row label="Gruppe" value={gruppeLabel(objekt.gruppe)} />
+              <Row label="Typ" value={objekt.typ} />
+              <Row label="Kaufpreis" value={fmtEUR(objekt.kaufpreis)} />
+              <Row label="Verantwortlich" value={objekt.verantwortlich} />
+            </dl>
+            <div className="mt-4 rounded-lg bg-slate-50 p-3">
+              <div className="text-xs font-medium text-slate-400">Nächste Wiedervorlage</div>
+              <div className={`text-sm ${overdue ? 'font-medium text-rose-600' : 'text-slate-700'}`}>{fmtDate(objekt.followUp.date)} — {objekt.followUp.note}</div>
+            </div>
+
+            <div className="mt-4 border-t border-slate-100 pt-4">
+              <div className="mb-2 text-xs font-medium text-slate-400">Eigentümer</div>
+              {objekt.eigentuemer ? (
+                <dl className="space-y-1 text-sm">
+                  <Row label="Name" value={objekt.eigentuemer.name} />
+                  <Row label="Telefon" value={objekt.eigentuemer.telefon} />
+                  <Row label="E-Mail" value={objekt.eigentuemer.email} />
+                  {objekt.eigentuemer.ansprechpartner && <Row label="Ansprechpartner" value={objekt.eigentuemer.ansprechpartner} />}
+                </dl>
+              ) : (
+                <p className="mb-2 text-xs text-slate-400">Noch nicht vom Eigentümer bestätigt.</p>
+              )}
+              <div className="mt-2">
+                <FormularLinkButtons pfad={`/formular/eigentuemer/${objekt.id}`} />
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-5 lg:col-span-1">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Unterlagen-Vollständigkeit</h3>
+            <div className="mb-3 flex items-center gap-2">
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className={`h-full rounded-full ${unterlagenCheck.prozent === 100 ? 'bg-emerald-500' : 'bg-accent-500'}`}
+                  style={{ width: `${unterlagenCheck.prozent}%` }}
+                />
+              </div>
+              <span className="text-sm font-semibold text-slate-700">{unterlagenCheck.prozent} %</span>
+            </div>
+            {unterlagenCheck.pflicht.length === 0 ? (
+              <p className="text-xs text-slate-400">Für den Typ "{objekt.typ}" sind keine Pflicht-Unterlagen hinterlegt.</p>
+            ) : (
+              <ul className="space-y-1.5 text-sm">
+                {unterlagenCheck.pflicht.map((name) => {
+                  const vorhanden = unterlagenCheck.vorhanden.includes(name)
+                  return (
+                    <li key={name}>
+                      <button
+                        onClick={() => openOrdner(name)}
+                        className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left hover:bg-slate-50"
+                      >
+                        {vorhanden ? (
+                          <CheckCircle2 size={14} className="flex-shrink-0 text-emerald-500" />
+                        ) : (
+                          <XCircle size={14} className="flex-shrink-0 text-rose-400" />
+                        )}
+                        <span className={vorhanden ? 'text-slate-600' : 'font-medium text-slate-700'}>{name}</span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </Card>
+
+          <Card className="p-5 lg:col-span-1">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Aktivitäten-Timeline</h3>
+            <ul className="space-y-3">
+              {objekt.activities.map((a) => (
+                <li key={a.id} className="flex gap-3 text-sm">
+                  <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-400" />
+                  <div>
+                    <div className="text-slate-700">{a.text}</div>
+                    <div className="text-xs text-slate-400">{fmtDate(a.date)} · {a.user}</div>
+                  </div>
+                </li>
+              ))}
+              {objekt.activities.length === 0 && <EmptyState text="Keine Aktivitäten." />}
+            </ul>
+          </Card>
+
+          <ExposeSection objekt={objekt} />
+        </div>
+      )}
+
+      {tab === 'dokumente' && !ordner && (
+        <div>
+          <ObjektUnterlagenAnfordern objekt={objekt} />
+          <div className="mb-3 flex justify-end">
+            <PrimaryButton onClick={() => setUploadOpen(true)}>
+              <Sparkles size={14} /> Dokument hochladen (KI sortiert automatisch)
+            </PrimaryButton>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {DOKUMENT_ORDNER.map((name) => {
+            const count = objekt.dokumente[name]?.length ?? 0
+            return (
+              <button
+                key={name}
+                onClick={() => openOrdner(name)}
+                className="flex flex-col items-start gap-2 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-accent-300 hover:shadow"
+              >
+                <Folder size={22} className="text-accent-500" />
+                <span className="text-sm font-medium text-slate-700">{name}</span>
+                <span className="text-xs text-slate-400">{count} Dokument{count === 1 ? '' : 'e'}</span>
+              </button>
+            )
+          })}
+          </div>
+        </div>
+      )}
+
+      {tab === 'dokumente' && ordner && (
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <button onClick={() => setParams({ tab: 'dokumente' })} className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-800">
+              <FolderOpen size={16} className="text-accent-500" /> {ordner}
+            </button>
+            <button onClick={() => setUploadOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+              <Upload size={13} /> Datei hochladen
+            </button>
+          </div>
+          {oeffneFehler && <p className="mb-3 text-sm font-medium text-rose-600">{oeffneFehler}</p>}
+          <Card className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                  <th className="px-4 py-3">Name</th><th className="px-4 py-3">Datum</th><th className="px-4 py-3">Größe</th><th className="px-4 py-3">Ordner</th><th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(objekt.dokumente[ordner] ?? []).map((d) => (
+                  <tr key={d.id} className="border-b border-slate-50 last:border-0">
+                    <td className="px-4 py-3 font-medium text-slate-700">
+                      {d.url ? (
+                        <button onClick={() => dokumentOeffnen(d)} className="flex items-center gap-2 text-left hover:text-accent-700 hover:underline">
+                          <File size={14} className="text-slate-400" />{d.name}
+                        </button>
+                      ) : (
+                        <span className="flex items-center gap-2"><File size={14} className="text-slate-400" />{d.name}</span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(d.datum)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-500">{d.groesse}</td>
+                    <td className="px-4 py-2">
+                      <select
+                        value={ordner}
+                        onChange={(e) => dokumentVerschieben(d, ordner as DokumentOrdnerName, e.target.value as DokumentOrdnerName)}
+                        className="rounded-md border border-slate-200 bg-white px-1.5 py-1 text-xs text-slate-600"
+                        title="In einen anderen Ordner legen"
+                        aria-label={`${d.name} in einen anderen Ordner legen`}
+                      >
+                        {DOKUMENT_ORDNER.map((o) => (
+                          <option key={o} value={o}>{o}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        onClick={() => dokumentLoeschen(d, ordner as DokumentOrdnerName)}
+                        className="inline-flex items-center rounded-md border border-slate-200 p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                        title="Datei löschen"
+                        aria-label={`${d.name} löschen`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {(objekt.dokumente[ordner] ?? []).length === 0 && (
+                  <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">Keine Dateien in diesem Ordner.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      )}
+
+      {tab === 'verkaufsdaten' && <ObjektVerkaufsdatenblatt key={objekt.id} objekt={objekt} />}
+
+      {tab === 'kurzpruefung' && <ObjektKurzpruefungBlatt key={objekt.id} objekt={objekt} />}
+
+      {tab === 'fragen' && <ObjektFragenSection key={objekt.id} objekt={objekt} />}
+
+      {tab === 'weitergaben' && <ObjektWeitergabenSection key={objekt.id} objekt={objekt} />}
+
+      {tab === 'abrechnung' && <ObjektAbrechnungSection key={objekt.id} objekt={objekt} />}
+      {tab === 'bewertung' && <ObjektBewertungSection key={objekt.id} objekt={objekt} />}
+
+      {tab === 'finanzierung' && (
+        <div>
+          <div className="mb-3 flex justify-end">
+            <PrimaryButton onClick={() => setFinOpen(true)}><Plus size={14} /> Finanzierung anlegen</PrimaryButton>
+          </div>
+          <Card className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                  <th className="px-4 py-3">Bank/Partner</th><th className="px-4 py-3">Darlehenssumme</th><th className="px-4 py-3">Zinssatz</th><th className="px-4 py-3">Laufzeit</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Ansprechpartner</th>
+                </tr>
+              </thead>
+              <tbody>
+                {finanzierungen.map((f) => (
+                  <tr key={f.id} className="border-b border-slate-50 last:border-0">
+                    <td className="px-4 py-3 font-medium text-slate-700">{f.bank}</td>
+                    <td className="px-4 py-3 text-slate-700">{fmtEUR(f.darlehenssumme)}</td>
+                    <td className="px-4 py-3 text-slate-500">{f.zinssatz.toFixed(1)} %</td>
+                    <td className="px-4 py-3 text-slate-500">{f.laufzeit}</td>
+                    <td className="px-4 py-3"><StatusBadge label={f.status} color={finStatusColor(f.status)} /></td>
+                    <td className="px-4 py-3 text-slate-500">{f.ansprechpartner}</td>
+                  </tr>
+                ))}
+                {finanzierungen.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">Keine Finanzierungen verknüpft.</td></tr>}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      )}
+
+      {tab === 'vorschlaege' && (
+        <div>
+          <Card className="mb-4 p-4">
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-slate-700">Passende Gesuche</h3>
+              {gesuchTreffer.length > 0 && (
+                <SecondaryButton onClick={() => setAnGesucheOpen(true)}><Send size={13} /> An passende Gesuche schicken</SecondaryButton>
+              )}
+            </div>
+            {gesuchTreffer.length === 0 ? (
+              <p className="text-sm text-slate-500">Zurzeit sucht niemand ein solches Objekt. Gesuche erfasst du unter „Gesuche" in der Seitenleiste.</p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {gesuchTreffer.map((t) => (
+                  <li key={`${t.kunde.id}:${t.gesuch.id}`} className="text-sm">
+                    <a href={`#${t.bereich === 'immobilienkunden' ? `/immobilien/kunden/${t.kunde.id}?tab=stammdatenblatt` : kundeDetailPfad(t.bereich, t.kunde.id)}`} className="font-medium text-accent-600 hover:underline">
+                      {t.kunde.firma}
+                    </a>
+                    <span className="text-slate-600"> sucht: {t.gesuch.titel}</span>
+                    <div className="text-xs text-slate-500">
+                      {[t.gesuch.objekttypen.join(', '), t.gesuch.lage, budgetText(t.gesuch), ...eckdatenTexte(t.gesuch)].filter((x) => x && x !== '–').join(' · ')} · passt: {t.passt.join(', ')}
+                      {t.offen.length > 0 && <span className="text-amber-600"> · {t.offen.join(', ')}</span>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+          <div className="mb-3 flex justify-end">
+            <PrimaryButton onClick={() => setVorschlagOpen(true)}><Plus size={14} /> Diesem Kunden vorschlagen</PrimaryButton>
+          </div>
+          <div className="space-y-3">
+            {vorschlaege.map((v) => (
+              <Card key={v.id} className="p-4">
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-slate-800">
+                    {v.kundeName} <span className="font-normal text-slate-400">· {kundeBereichLabel(v.kundeBereich)}</span>
+                  </div>
+                  <StatusBadge label={VORSCHLAG_STATUS_LABEL[v.status]} color={VORSCHLAG_STATUS_COLOR[v.status]} />
+                </div>
+                <p className="mb-2 text-sm text-slate-600">{v.steuerBegruendung}</p>
+                <div className="mb-2 text-xs text-slate-400">
+                  Erstellt {fmtDate(v.erstelltAm)} durch {v.erstelltVon}
+                  {v.beantwortetAm && ` · beantwortet ${fmtDate(v.beantwortetAm)}`}
+                </div>
+                {v.status === 'offen' && <FormularLinkButtons pfad={`/formular/expose/${v.id}`} />}
+              </Card>
+            ))}
+            {vorschlaege.length === 0 && <EmptyState text="Noch keinem Kunden vorgeschlagen." />}
+          </div>
+        </div>
+      )}
+
+      {anGesucheOpen && <ObjektAnGesucheSenden objekt={objekt} treffer={gesuchTreffer} onClose={() => setAnGesucheOpen(false)} />}
+
+      <Modal open={finOpen} onClose={() => setFinOpen(false)} title="Finanzierung anlegen">
+        <FinanzierungForm
+          onSubmit={(f) => {
+            dispatch({ type: 'ADD_FINANZIERUNG', finanzierung: { ...f, id: uid('f'), objektId: objekt.id } })
+            setFinOpen(false)
+          }}
+        />
+      </Modal>
+
+      <Modal open={vorschlagOpen} onClose={() => setVorschlagOpen(false)} title="Objekt einem Kunden vorschlagen">
+        <VorschlagForm
+          state={state}
+          onSubmit={(v) => {
+            dispatch({
+              type: 'ADD_OBJEKT_VORSCHLAG',
+              vorschlag: { ...v, id: uid('ov'), objektId: objekt.id, status: 'offen', erstelltAm: today() },
+            })
+            setVorschlagOpen(false)
+          }}
+        />
+      </Modal>
+
+      <ObjektDokumentUploadModal
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        objektId={objekt.id}
+        vorausgewaehlterOrdner={ordner ?? undefined}
+        onGespeichert={dokumentGespeichert}
+      />
+    </div>
+  )
+}
+
+// KI-Dokumentenverarbeitung (Immobilienabteilung, siehe Projektnotiz 2026-11-02): Bild/PDF
+// hochladen -> Claude erkennt Unterlagen-Kategorie, schlägt Dateinamen + Datum vor -> Mitarbeiter
+// prüft/korrigiert -> echte Datei landet im privaten Supabase-Storage-Bucket "objekt-dokumente".
+function ObjektDokumentUploadModal({
+  open,
+  onClose,
+  objektId,
+  vorausgewaehlterOrdner,
+  onGespeichert,
+}: {
+  open: boolean
+  onClose: () => void
+  objektId: string
+  vorausgewaehlterOrdner?: DokumentOrdnerName
+  onGespeichert: (ordner: DokumentOrdnerName, dokument: Dokument) => void
+}) {
+  const [file, setFile] = useState<File | null>(null)
+  const [pruefeKi, setPruefeKi] = useState(false)
+  const [kiHinweis, setKiHinweis] = useState('')
+  const [kiVorschlag, setKiVorschlag] = useState(false)
+  const [ordner, setOrdner] = useState<DokumentOrdnerName>(vorausgewaehlterOrdner ?? 'Sonstiges')
+  const [dateiname, setDateiname] = useState('')
+  const [datum, setDatum] = useState(today())
+  const [speichern, setSpeichern] = useState(false)
+  const [speicherFehler, setSpeicherFehler] = useState('')
+
+  function reset() {
+    setFile(null)
+    setPruefeKi(false)
+    setKiHinweis('')
+    setKiVorschlag(false)
+    setOrdner(vorausgewaehlterOrdner ?? 'Sonstiges')
+    setDateiname('')
+    setDatum(today())
+    setSpeichern(false)
+    setSpeicherFehler('')
+  }
+
+  function handleClose() {
+    reset()
+    onClose()
+  }
+
+  async function handleFile(f: File | undefined) {
+    if (!f) return
+    setFile(f)
+    setDateiname(f.name)
+    setKiVorschlag(false)
+    setKiHinweis('')
+    const unterstuetzt = f.type.startsWith('image/') || f.type === 'application/pdf'
+    if (!unterstuetzt) {
+      setKiHinweis('Automatische Erkennung funktioniert nur bei Bildern/PDFs — bitte Kategorie manuell wählen.')
+      return
+    }
+    setPruefeKi(true)
+    try {
+      const base64 = await leseAlsBase64(f)
+      const klass = await classifyObjektDokument(base64, f.type, f.name)
+      setOrdner(klass.ordner)
+      setDateiname(klass.vorgeschlagener_dateiname || f.name)
+      if (klass.erkanntes_datum) setDatum(klass.erkanntes_datum)
+      setKiVorschlag(true)
+    } catch (err) {
+      setKiHinweis(err instanceof Error ? err.message : 'KI-Erkennung fehlgeschlagen — bitte manuell einordnen.')
+    } finally {
+      setPruefeKi(false)
+    }
+  }
+
+  async function speichernKlick() {
+    if (!file) return
+    setSpeichern(true)
+    setSpeicherFehler('')
+    try {
+      const { pfad, groesse } = await ladeObjektDokumentHoch(objektId, file)
+      const dokument: Dokument = {
+        id: uid('dok'),
+        name: dateiname.trim() || file.name,
+        typ: file.type || 'Datei',
+        datum,
+        groesse,
+        url: pfad,
+      }
+      onGespeichert(ordner, dokument)
+      handleClose()
+    } catch (err) {
+      setSpeicherFehler(err instanceof Error ? err.message : 'Hochladen fehlgeschlagen.')
+    } finally {
+      setSpeichern(false)
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={handleClose} title="Dokument hochladen" width="max-w-lg">
+      <p className="mb-3 text-xs text-slate-500">
+        Bild oder PDF hochladen — die KI erkennt automatisch die passende Unterlagen-Kategorie und schlägt einen
+        Dateinamen vor. Bitte vor dem Speichern kurz prüfen.
+      </p>
+
+      <input
+        type="file"
+        accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
+        onChange={(e) => handleFile(e.target.files?.[0])}
+        className="mb-4 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-accent-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-accent-700 hover:file:bg-accent-100"
+      />
+
+      {pruefeKi && (
+        <p className="mb-3 flex items-center gap-1.5 text-xs text-accent-600">
+          <Sparkles size={13} className="animate-pulse" /> KI erkennt Dokumenttyp …
+        </p>
+      )}
+      {kiHinweis && <p className="mb-3 text-xs text-amber-600">{kiHinweis}</p>}
+      {kiVorschlag && (
+        <p className="mb-3 flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+          <Sparkles size={13} /> Von der KI erkannt — bitte prüfen.
+        </p>
+      )}
+
+      {file && (
+        <>
+          <Field label="Kategorie">
+            <select className={inputClass} value={ordner} onChange={(e) => setOrdner(e.target.value as DokumentOrdnerName)}>
+              {DOKUMENT_ORDNER.map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Dateiname">
+            <input className={inputClass} value={dateiname} onChange={(e) => setDateiname(e.target.value)} />
+          </Field>
+          <Field label="Datum">
+            <input type="date" className={inputClass} value={datum} onChange={(e) => setDatum(e.target.value)} />
+          </Field>
+        </>
+      )}
+
+      {speicherFehler && <p className="mb-3 text-sm font-medium text-rose-600">{speicherFehler}</p>}
+
+      <div className="mt-4 flex justify-end gap-2">
+        <SecondaryButton onClick={handleClose}>Abbrechen</SecondaryButton>
+        <PrimaryButton onClick={speichernKlick} disabled={!file || speichern || pruefeKi}>
+          <Upload size={14} /> {speichern ? 'Wird hochgeladen …' : 'Speichern'}
+        </PrimaryButton>
+      </div>
+    </Modal>
+  )
+}
+
+function VorschlagForm({
+  state,
+  onSubmit,
+}: {
+  state: AppData
+  onSubmit: (v: { kundeBereich: KundeBereich; kundeId: string; kundeName: string; steuerBegruendung: string; erstelltVon: string }) => void
+}) {
+  // Nur Bereiche mit Freigabe — einen Vorschlag an einen Kunden ohne Freigabe würde die Datenbank ablehnen.
+  const { kundenBereiche } = useBereichsRechte()
+  const [bereich, setBereich] = useState<KundeBereich>(kundenBereiche[0]?.id ?? 'privat')
+  const kundenListe = KUNDEN_BEREICHE.find((b) => b.id === bereich)!.get(state)
+  const [kundeId, setKundeId] = useState(kundenListe[0]?.id ?? '')
+  const [steuerBegruendung, setSteuerBegruendung] = useState('')
+  const [erstelltVon, setErstelltVon] = useState('Jens Sebastian')
+
+  function changeBereich(next: KundeBereich) {
+    setBereich(next)
+    const liste = KUNDEN_BEREICHE.find((b) => b.id === next)!.get(state)
+    setKundeId(liste[0]?.id ?? '')
+  }
+
+  function submit() {
+    const kunde = kundenListe.find((k) => k.id === kundeId)
+    if (!kunde || !steuerBegruendung.trim()) return
+    onSubmit({ kundeBereich: bereich, kundeId: kunde.id, kundeName: kunde.ansprechpartner, steuerBegruendung, erstelltVon })
+  }
+
+  return (
+    <div>
+      <Field label="Bereich">
+        <select className={inputClass} value={bereich} onChange={(e) => changeBereich(e.target.value as KundeBereich)}>
+          {kundenBereiche.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+        </select>
+      </Field>
+      <Field label="Kunde/Mandant">
+        <select className={inputClass} value={kundeId} onChange={(e) => setKundeId(e.target.value)}>
+          {kundenListe.length === 0 && <option value="">– keine Kunden in diesem Bereich –</option>}
+          {kundenListe.map((k) => <option key={k.id} value={k.id}>{k.firma} ({k.ansprechpartner})</option>)}
+        </select>
+      </Field>
+      <Field label="Begründung (z.B. Steuerersparnis)">
+        <textarea
+          className={inputClass}
+          rows={4}
+          value={steuerBegruendung}
+          onChange={(e) => setSteuerBegruendung(e.target.value)}
+          placeholder="z.B. Durch AfA und Finanzierungskosten ca. 4.200 €/Jahr Steuerersparnis bei diesem Objekt."
+        />
+      </Field>
+      <Field label="Erstellt von">
+        <input className={inputClass} value={erstelltVon} onChange={(e) => setErstelltVon(e.target.value)} />
+      </Field>
+      <div className="mt-4 flex justify-end">
+        <PrimaryButton onClick={submit} disabled={!kundeId}>Vorschlag anlegen &amp; Link erzeugen</PrimaryButton>
+      </div>
+    </div>
+  )
+}
+
+export function finStatusColor(status: FinanzierungStatus): string {
+  const colors: Record<FinanzierungStatus, string> = {
+    Angefragt: 'bg-slate-100 text-slate-600',
+    'In Prüfung': 'bg-amber-100 text-amber-700',
+    Zugesagt: 'bg-emerald-100 text-emerald-700',
+    Abgelehnt: 'bg-rose-100 text-rose-700',
+    Ausgezahlt: 'bg-sky-100 text-sky-700',
+  }
+  return colors[status]
+}
+
+// Automatisch bei Objektanlage per KI erstelltes 1-Seiten-Exposé (siehe ObjektListe.tsx) — hier
+// einsehbar/editierbar und bei Bedarf neu generierbar (Punkt 12 der Bugfix-Liste).
+function ExposeSection({ objekt }: { objekt: Objekt }) {
+  const { state, dispatch } = useApp()
+  const [entwurf, setEntwurf] = useState(objekt.exposeText ?? '')
+  const [generiert, setGeneriert] = useState(false)
+  // Text nach einer eigenen, unter „Vorlagen → KI-Anweisungen" hinterlegten Anweisung der Abteilung.
+  const anweisungen = state.vorlagenImmobilien.filter((v) => v.kategorie === 'ki' && v.text.trim() !== '')
+  const [anweisungId, setAnweisungId] = useState('')
+  const [zusatz, setZusatz] = useState('')
+  const [schreibt, setSchreibt] = useState(false)
+  const [schreibHinweis, setSchreibHinweis] = useState<{ fehler?: string; fehlend?: string; gelesen?: string[]; name?: string } | null>(null)
+
+  async function nachAnweisung() {
+    if (!anweisungId) return
+    setSchreibt(true)
+    setSchreibHinweis(null)
+    try {
+      const r = await schreibeObjektTextNachAnweisung(objekt.id, anweisungId, zusatz)
+      // Erst in das Textfeld — gespeichert wird mit „Speichern", damit nichts ungelesen überschrieben wird.
+      setEntwurf(r.text)
+      setSchreibHinweis({ fehlend: r.fehlendeAngaben, gelesen: r.gelesen, name: r.anweisung })
+    } catch (err) {
+      setSchreibHinweis({ fehler: err instanceof Error ? err.message : 'Der Text konnte nicht erstellt werden.' })
+    } finally {
+      setSchreibt(false)
+    }
+  }
+
+  // Übernimmt den Text neu, sobald die automatische Generierung (siehe ObjektListe.tsx) im
+  // Hintergrund fertig wird und objekt.exposeText von außen gesetzt wird.
+  useEffect(() => {
+    setEntwurf(objekt.exposeText ?? '')
+  }, [objekt.exposeText])
+
+  async function neuGenerieren() {
+    setGeneriert(true)
+    try {
+      const text = await generateExpose(objekt.bezeichnung, objekt.adresse, objekt.typ, objekt.kaufpreis)
+      dispatch({ type: 'UPDATE_OBJEKT', id: objekt.id, patch: { exposeText: text } })
+      setEntwurf(text)
+    } finally {
+      setGeneriert(false)
+    }
+  }
+
+  function speichern() {
+    dispatch({ type: 'UPDATE_OBJEKT', id: objekt.id, patch: { exposeText: entwurf } })
+  }
+
+  return (
+    <Card className="p-5 lg:col-span-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-700">Exposé (automatisch erstellt, Whitelabel)</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <ExposePdfKnopf objekt={objekt} beschreibung={entwurf} />
+          {isEmailGatewayConfigured && (
+            <SecondaryButton onClick={neuGenerieren} disabled={generiert}>
+              <Sparkles size={13} className={generiert ? 'animate-pulse' : ''} /> {generiert ? 'Erstellt …' : 'Neu generieren'}
+            </SecondaryButton>
+          )}
+        </div>
+      </div>
+      {isEmailGatewayConfigured && anweisungen.length > 0 && (
+        <div className="mb-3 rounded-lg border border-accent-100 bg-accent-50/60 p-3">
+          <p className="mb-2 text-sm text-slate-700">
+            <strong>Nach eigener KI-Anweisung schreiben:</strong> Die KI nimmt eine eurer hinterlegten Anweisungen, die Daten des Objekts und seine Unterlagen. Das Ergebnis erscheint unten im Textfeld und wird erst mit „Speichern" übernommen.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <select className={`${inputClass} w-auto max-w-full flex-1`} value={anweisungId} onChange={(e) => setAnweisungId(e.target.value)} aria-label="KI-Anweisung">
+              <option value="">Anweisung wählen …</option>
+              {anweisungen.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
+            </select>
+            <SecondaryButton onClick={nachAnweisung} disabled={!anweisungId || schreibt}>
+              <Sparkles size={13} className={schreibt ? 'animate-pulse' : ''} /> {schreibt ? 'Schreibt … (bis zu 2 Minuten)' : 'Text erstellen'}
+            </SecondaryButton>
+          </div>
+          <input className={`${inputClass} mt-2`} value={zusatz} onChange={(e) => setZusatz(e.target.value)} placeholder="Zusätzlicher Wunsch (optional), z. B. „für Kapitalanleger, eine Seite“" aria-label="Zusätzlicher Wunsch" />
+          {schreibHinweis?.fehler && <p className="mt-2 text-sm text-rose-600">{schreibHinweis.fehler}</p>}
+          {schreibHinweis && !schreibHinweis.fehler && (
+            <div className="mt-2 space-y-1 text-xs text-slate-600">
+              <p className="font-medium text-slate-700">Erstellt nach „{schreibHinweis.name}". Bitte lesen, bei Bedarf ändern und dann speichern.</p>
+              {schreibHinweis.gelesen && schreibHinweis.gelesen.length > 0 && <p>Gelesene Unterlagen: {schreibHinweis.gelesen.join(', ')}.</p>}
+              {schreibHinweis.fehlend && <p className="whitespace-pre-wrap text-amber-700">Für ein besseres Ergebnis fehlt noch: {schreibHinweis.fehlend}</p>}
+            </div>
+          )}
+        </div>
+      )}
+      {objekt.exposeText === undefined && !generiert && entwurf === '' ? (
+        <p className="text-sm text-slate-400">Noch kein Exposé-Text. Erstelle ihn mit „Neu generieren" oder nach einer eigenen KI-Anweisung.</p>
+      ) : (
+        <textarea className={inputClass} rows={entwurf.length > 900 ? 16 : 6} value={entwurf} onChange={(e) => setEntwurf(e.target.value)} />
+      )}
+      {entwurf !== (objekt.exposeText ?? '') && (
+        <div className="mt-2 flex justify-end">
+          <PrimaryButton onClick={speichern}>Speichern</PrimaryButton>
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4">
+      <dt className="text-slate-400">{label}</dt>
+      <dd className="text-right text-slate-700">{value}</dd>
+    </div>
+  )
+}
+
+function FinanzierungForm({ onSubmit }: { onSubmit: (f: { bank: string; darlehenssumme: number; zinssatz: number; laufzeit: string; status: FinanzierungStatus; ansprechpartner: string }) => void }) {
+  const [bank, setBank] = useState('')
+  const [darlehenssumme, setDarlehenssumme] = useState(300000)
+  const [zinssatz, setZinssatz] = useState(3.5)
+  const [laufzeit, setLaufzeit] = useState('20 Jahre')
+  const [status, setStatus] = useState<FinanzierungStatus>('Angefragt')
+  const [ansprechpartner, setAnsprechpartner] = useState('')
+
+  return (
+    <div>
+      <Field label="Bank / Partner"><input className={inputClass} value={bank} onChange={(e) => setBank(e.target.value)} /></Field>
+      <Field label="Darlehenssumme (€)"><input type="number" className={inputClass} value={darlehenssumme} onChange={(e) => setDarlehenssumme(Number(e.target.value))} /></Field>
+      <Field label="Zinssatz (%)"><input type="number" step="0.1" className={inputClass} value={zinssatz} onChange={(e) => setZinssatz(Number(e.target.value))} /></Field>
+      <Field label="Laufzeit"><input className={inputClass} value={laufzeit} onChange={(e) => setLaufzeit(e.target.value)} /></Field>
+      <Field label="Status">
+        <select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value as FinanzierungStatus)}>
+          <option>Angefragt</option><option>In Prüfung</option><option>Zugesagt</option><option>Abgelehnt</option><option>Ausgezahlt</option>
+        </select>
+      </Field>
+      <Field label="Ansprechpartner"><input className={inputClass} value={ansprechpartner} onChange={(e) => setAnsprechpartner(e.target.value)} /></Field>
+      <div className="mt-4 flex justify-end">
+        <PrimaryButton onClick={() => onSubmit({ bank, darlehenssumme, zinssatz, laufzeit, status, ansprechpartner })}>Speichern</PrimaryButton>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111111" />
+    <title>3 Steps Ahead CRM</title>
+    <script>
+      // Ersatzspeicher, falls der Browser-Speicher gesperrt ist (z. B. in einem abgeschotteten Rahmen).
+      (function () {
+        function speicher() {
+          var d = {};
+          return {
+            getItem: function (k) { return Object.prototype.hasOwnProperty.call(d, k) ? d[k] : null; },
+            setItem: function (k, v) { d[k] = String(v); },
+            removeItem: function (k) { delete d[k]; },
+            clear: function () { d = {}; },
+            key: function (i) { return Object.keys(d)[i] || null; },
+            get length() { return Object.keys(d).length; }
+          };
+        }
+        ["localStorage", "sessionStorage"].forEach(function (name) {
+          try { var s = window[name]; var t = "__probe__"; s.setItem(t, t); s.removeItem(t); }
+          catch (e) { try { Object.defineProperty(window, name, { value: speicher(), configurable: true }); } catch (e2) {} }
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,947 @@
+import type { StatusNode } from '../types'
+
+// ==========================================================================
+// STATUSNETZ — UNTERNEHMENSBERATUNG
+// ==========================================================================
+
+export const BERATUNG_STATUS: Record<string, StatusNode> = {
+  lead: {
+    id: 'lead',
+    label: 'Neue Erfindungsmeldung',
+    color: 'bg-slate-100 text-slate-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['erstkontakt', 'nicht_qualifiziert', 'verloren'],
+  },
+  erstkontakt: {
+    id: 'erstkontakt',
+    label: 'Erstkontakt hergestellt',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['termin', 'wiedervorlage', 'nicht_qualifiziert', 'verloren'],
+  },
+  termin: {
+    id: 'termin',
+    label: 'Erstberatung vereinbart',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['durchgefuehrt', 'wiedervorlage', 'verloren'],
+  },
+  durchgefuehrt: {
+    id: 'durchgefuehrt',
+    label: 'Erstberatung erfolgt',
+    color: 'bg-cyan-100 text-cyan-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['konzept', 'wiedervorlage', 'verloren'],
+  },
+  konzept: {
+    id: 'konzept',
+    label: 'Anmeldung in Vorbereitung',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['angebot', 'wiedervorlage', 'verloren'],
+  },
+  angebot: {
+    id: 'angebot',
+    label: 'Kostenvoranschlag versendet',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['unterschrieben', 'wiedervorlage', 'verloren'],
+  },
+  unterschrieben: {
+    id: 'unterschrieben',
+    label: 'Mandat erteilt',
+    color: 'bg-violet-100 text-violet-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['aktives_mandat'],
+  },
+  aktives_mandat: {
+    id: 'aktives_mandat',
+    label: 'Prüfungsverfahren läuft',
+    color: 'bg-amber-100 text-amber-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['rechnung_gestellt', 'wiedervorlage'],
+  },
+  rechnung_gestellt: {
+    id: 'rechnung_gestellt',
+    label: 'Erteilt / abgerechnet',
+    color: 'bg-amber-100 text-amber-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['abgeschlossen'],
+  },
+  abgeschlossen: {
+    id: 'abgeschlossen',
+    label: 'Abgeschlossen',
+    color: 'bg-emerald-100 text-emerald-700',
+    isTerminal: true,
+    isMainPath: true,
+    next: [],
+  },
+  wiedervorlage: {
+    id: 'wiedervorlage',
+    label: 'Wiedervorlage / ruht',
+    color: 'bg-orange-100 text-orange-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: ['erstkontakt', 'termin', 'durchgefuehrt', 'konzept', 'angebot', 'aktives_mandat', 'verloren'],
+  },
+  verloren: {
+    id: 'verloren',
+    label: 'Verloren / Kein Interesse',
+    color: 'bg-rose-100 text-rose-700',
+    isTerminal: true,
+    isMainPath: false,
+    next: [],
+  },
+  nicht_qualifiziert: {
+    id: 'nicht_qualifiziert',
+    label: 'Nicht qualifiziert',
+    color: 'bg-slate-200 text-slate-600',
+    isTerminal: true,
+    isMainPath: false,
+    next: [],
+  },
+}
+
+// Hauptpfad-Reihenfolge für "Weiter →" (automatische nächste Station)
+export const BERATUNG_HAUPTPFAD = [
+  'lead',
+  'erstkontakt',
+  'termin',
+  'durchgefuehrt',
+  'konzept',
+  'angebot',
+  'unterschrieben',
+  'aktives_mandat',
+  'rechnung_gestellt',
+  'abgeschlossen',
+]
+
+// ==========================================================================
+// STATUSNETZ — IMMOBILIEN
+// ==========================================================================
+
+export const IMMOBILIEN_STATUS: Record<string, StatusNode> = {
+  akquise: {
+    id: 'akquise',
+    label: 'Akquise',
+    color: 'bg-slate-100 text-slate-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['vorbereitung', 'on_hold', 'abgebrochen'],
+  },
+  vorbereitung: {
+    id: 'vorbereitung',
+    label: 'Objektaufnahme / Vorbereitung',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['vermarktung', 'on_hold', 'abgebrochen'],
+  },
+  vermarktung: {
+    id: 'vermarktung',
+    label: 'Aktiv in Vermarktung',
+    color: 'bg-cyan-100 text-cyan-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['reserviert', 'on_hold', 'abgebrochen'],
+  },
+  reserviert: {
+    id: 'reserviert',
+    label: 'Reserviert',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['notarauftrag_vorbereitet', 'vermarktung', 'abgebrochen'],
+  },
+  // Digitaler Notarprozess (Markus Weber, Immobilienfachwirt, Beschluss 2026-11-03): ersetzt
+  // den bisherigen einzelnen Status "Notartermin" zwischen Reservierung und Verkauf durch die
+  // einzelnen, von ihm benannten Stufen — "Aufgaben dürfen nicht mehr vom Mitarbeiter abhängen,
+  // sondern das System muss wissen, was als Nächstes kommt" (siehe auch IMMOBILIEN_FOLGEAUFGABE
+  // weiter unten für die dazu automatisch erzeugte Folgeaufgabe je Stufe).
+  notarauftrag_vorbereitet: {
+    id: 'notarauftrag_vorbereitet',
+    label: 'Notarauftrag vorbereitet',
+    color: 'bg-indigo-200 text-indigo-800',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['vertragsentwurf_erhalten', 'abgebrochen'],
+  },
+  vertragsentwurf_erhalten: {
+    id: 'vertragsentwurf_erhalten',
+    label: 'Vertragsentwurf erhalten',
+    color: 'bg-blue-100 text-blue-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['pruefung_verkaeufer', 'abgebrochen'],
+  },
+  pruefung_verkaeufer: {
+    id: 'pruefung_verkaeufer',
+    label: 'Prüfung durch Verkäufer',
+    color: 'bg-sky-200 text-sky-800',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['pruefung_kaeufer', 'abgebrochen'],
+  },
+  pruefung_kaeufer: {
+    id: 'pruefung_kaeufer',
+    label: 'Prüfung durch Käufer',
+    color: 'bg-purple-100 text-purple-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['aenderungswuensche', 'abgebrochen'],
+  },
+  aenderungswuensche: {
+    id: 'aenderungswuensche',
+    label: 'Änderungswünsche klären',
+    color: 'bg-fuchsia-100 text-fuchsia-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['notartermin', 'abgebrochen'],
+  },
+  notartermin: {
+    id: 'notartermin',
+    label: 'Notartermin',
+    color: 'bg-violet-100 text-violet-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['beurkundet', 'abgebrochen'],
+  },
+  beurkundet: {
+    id: 'beurkundet',
+    label: 'Beurkundet',
+    color: 'bg-pink-100 text-pink-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['faelligkeitsmitteilung', 'abgebrochen'],
+  },
+  faelligkeitsmitteilung: {
+    id: 'faelligkeitsmitteilung',
+    label: 'Fälligkeitsmitteilung versendet',
+    color: 'bg-amber-100 text-amber-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['kaufpreis_gezahlt', 'abgebrochen'],
+  },
+  kaufpreis_gezahlt: {
+    id: 'kaufpreis_gezahlt',
+    label: 'Kaufpreis gezahlt',
+    color: 'bg-lime-100 text-lime-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['besitzuebergang', 'abgebrochen'],
+  },
+  besitzuebergang: {
+    id: 'besitzuebergang',
+    label: 'Besitzübergang',
+    color: 'bg-teal-100 text-teal-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['verkauft'],
+  },
+  verkauft: {
+    id: 'verkauft',
+    label: 'Verkauft (Grundbuch umgeschrieben)',
+    color: 'bg-emerald-100 text-emerald-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['archiv'],
+  },
+  archiv: {
+    id: 'archiv',
+    label: 'Archiv',
+    color: 'bg-slate-200 text-slate-600',
+    isTerminal: true,
+    isMainPath: true,
+    next: [],
+  },
+  on_hold: {
+    id: 'on_hold',
+    label: 'Zurückgestellt',
+    color: 'bg-orange-100 text-orange-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: ['akquise', 'vorbereitung', 'vermarktung', 'reserviert'],
+  },
+  abgebrochen: {
+    id: 'abgebrochen',
+    label: 'Nicht zustande gekommen / Abgebrochen',
+    color: 'bg-rose-100 text-rose-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: ['archiv'],
+  },
+}
+
+export const IMMOBILIEN_HAUPTPFAD = [
+  'akquise',
+  'vorbereitung',
+  'vermarktung',
+  'reserviert',
+  'notarauftrag_vorbereitet',
+  'vertragsentwurf_erhalten',
+  'pruefung_verkaeufer',
+  'pruefung_kaeufer',
+  'aenderungswuensche',
+  'notartermin',
+  'beurkundet',
+  'faelligkeitsmitteilung',
+  'kaufpreis_gezahlt',
+  'besitzuebergang',
+  'verkauft',
+  'archiv',
+]
+
+// Automatische Folgeaufgabe je Status-Stufe (Markus Weber: "Für jede Stufe: automatische
+// Aufgaben + Verantwortlicher + Frist" — Verantwortlicher kommt bereits vom Objekt selbst, hier nur
+// Hinweistext + Frist in Tagen ab Statuswechsel). Wird als Wiedervorlage gesetzt, wenn beim Statuswechsel
+// kein eigenes Wiedervorlage mitgegeben wurde, siehe SET_OBJEKT_STATUS in AppContext.tsx. Bewusst
+// editierbare Standardwerte, keine verbindlichen SLAs — bei Bedarf einfach hier anpassen.
+export const IMMOBILIEN_FOLGEAUFGABE: Record<string, { note: string; tageBisFaellig: number }> = {
+  reserviert: { note: 'Notarauftrag vorbereiten', tageBisFaellig: 3 },
+  notarauftrag_vorbereitet: { note: 'Vertragsentwurf beim Notar anfragen', tageBisFaellig: 5 },
+  vertragsentwurf_erhalten: { note: 'Vertragsentwurf durch Verkäufer prüfen lassen', tageBisFaellig: 3 },
+  pruefung_verkaeufer: { note: 'Vertragsentwurf durch Käufer prüfen lassen', tageBisFaellig: 3 },
+  pruefung_kaeufer: { note: 'Änderungswünsche klären', tageBisFaellig: 3 },
+  aenderungswuensche: { note: 'Notartermin vereinbaren', tageBisFaellig: 5 },
+  notartermin: { note: 'Beurkundung abwarten/durchführen', tageBisFaellig: 7 },
+  beurkundet: { note: 'Fälligkeitsmitteilung an Käufer veranlassen', tageBisFaellig: 3 },
+  faelligkeitsmitteilung: { note: 'Kaufpreiseingang überwachen', tageBisFaellig: 14 },
+  kaufpreis_gezahlt: { note: 'Besitzübergabe vorbereiten', tageBisFaellig: 7 },
+  besitzuebergang: { note: 'Grundbuchumschreibung überwachen', tageBisFaellig: 30 },
+}
+
+// ==========================================================================
+// STATUSNETZ — ERBEN
+// ==========================================================================
+
+export const ERBEN_STATUS: Record<string, StatusNode> = {
+  erstkontakt: {
+    id: 'erstkontakt',
+    label: 'Erstkontakt',
+    color: 'bg-slate-100 text-slate-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['bedarfsanalyse', 'wiedervorlage', 'verloren'],
+  },
+  bedarfsanalyse: {
+    id: 'bedarfsanalyse',
+    label: 'Erstberatung',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['unterlagen_angefordert', 'wiedervorlage', 'verloren'],
+  },
+  unterlagen_angefordert: {
+    id: 'unterlagen_angefordert',
+    label: 'Recherche Ähnlichkeit',
+    color: 'bg-cyan-100 text-cyan-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['konzept_erstellt', 'wiedervorlage', 'verloren'],
+  },
+  konzept_erstellt: {
+    id: 'konzept_erstellt',
+    label: 'Anmeldung eingereicht',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['beratungsgespraech', 'wiedervorlage', 'verloren'],
+  },
+  beratungsgespraech: {
+    id: 'beratungsgespraech',
+    label: 'Beratungsgespräch geführt',
+    color: 'bg-violet-100 text-violet-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['umsetzung', 'wiedervorlage', 'verloren'],
+  },
+  umsetzung: {
+    id: 'umsetzung',
+    label: 'Widerspruchsverfahren',
+    color: 'bg-amber-100 text-amber-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['abgeschlossen', 'wiedervorlage'],
+  },
+  abgeschlossen: {
+    id: 'abgeschlossen',
+    label: 'Abgeschlossen',
+    color: 'bg-emerald-100 text-emerald-700',
+    isTerminal: true,
+    isMainPath: true,
+    next: [],
+  },
+  wiedervorlage: {
+    id: 'wiedervorlage',
+    label: 'Wiedervorlage / ruht',
+    color: 'bg-orange-100 text-orange-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: ['erstkontakt', 'bedarfsanalyse', 'unterlagen_angefordert', 'konzept_erstellt', 'beratungsgespraech', 'umsetzung', 'verloren'],
+  },
+  verloren: {
+    id: 'verloren',
+    label: 'Verloren / Kein Interesse',
+    color: 'bg-rose-100 text-rose-700',
+    isTerminal: true,
+    isMainPath: false,
+    next: [],
+  },
+}
+
+export const ERBEN_HAUPTPFAD = [
+  'erstkontakt',
+  'bedarfsanalyse',
+  'unterlagen_angefordert',
+  'konzept_erstellt',
+  'beratungsgespraech',
+  'umsetzung',
+  'abgeschlossen',
+]
+
+// ==========================================================================
+// STATUSNETZ — BETRIEBSÜBERGABE
+// ==========================================================================
+
+export const BETRIEBSUEBERGABE_STATUS: Record<string, StatusNode> = {
+  erstkontakt: {
+    id: 'erstkontakt',
+    label: 'Erstkontakt',
+    color: 'bg-slate-100 text-slate-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['bedarfsanalyse', 'wiedervorlage', 'verloren'],
+  },
+  bedarfsanalyse: {
+    id: 'bedarfsanalyse',
+    label: 'Erstberatung',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['unternehmensbewertung', 'wiedervorlage', 'verloren'],
+  },
+  unternehmensbewertung: {
+    id: 'unternehmensbewertung',
+    label: 'Verletzungsanalyse',
+    color: 'bg-cyan-100 text-cyan-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['nachfolgekonzept', 'wiedervorlage', 'verloren'],
+  },
+  nachfolgekonzept: {
+    id: 'nachfolgekonzept',
+    label: 'Abmahnung / Berechtigungsanfrage',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['nachfolgersuche', 'wiedervorlage', 'verloren'],
+  },
+  nachfolgersuche: {
+    id: 'nachfolgersuche',
+    label: 'Klage eingereicht',
+    color: 'bg-violet-100 text-violet-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['verhandlung', 'wiedervorlage', 'verloren'],
+  },
+  verhandlung: {
+    id: 'verhandlung',
+    label: 'Mündliche Verhandlung',
+    color: 'bg-fuchsia-100 text-fuchsia-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['notartermin', 'wiedervorlage', 'verloren'],
+  },
+  notartermin: {
+    id: 'notartermin',
+    label: 'Urteil / Vergleich',
+    color: 'bg-amber-100 text-amber-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['abgeschlossen', 'wiedervorlage'],
+  },
+  abgeschlossen: {
+    id: 'abgeschlossen',
+    label: 'Abgeschlossen',
+    color: 'bg-emerald-100 text-emerald-700',
+    isTerminal: true,
+    isMainPath: true,
+    next: [],
+  },
+  wiedervorlage: {
+    id: 'wiedervorlage',
+    label: 'Wiedervorlage / ruht',
+    color: 'bg-orange-100 text-orange-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: [
+      'erstkontakt',
+      'bedarfsanalyse',
+      'unternehmensbewertung',
+      'nachfolgekonzept',
+      'nachfolgersuche',
+      'verhandlung',
+      'notartermin',
+      'verloren',
+    ],
+  },
+  verloren: {
+    id: 'verloren',
+    label: 'Verloren / Kein Interesse',
+    color: 'bg-rose-100 text-rose-700',
+    isTerminal: true,
+    isMainPath: false,
+    next: [],
+  },
+}
+
+export const BETRIEBSUEBERGABE_HAUPTPFAD = [
+  'erstkontakt',
+  'bedarfsanalyse',
+  'unternehmensbewertung',
+  'nachfolgekonzept',
+  'nachfolgersuche',
+  'verhandlung',
+  'notartermin',
+  'abgeschlossen',
+]
+
+// ==========================================================================
+// STATUSNETZ — BETRIEBSFORMEN (RECHTSFORMBERATUNG)
+// ==========================================================================
+
+export const BETRIEBSFORMEN_STATUS: Record<string, StatusNode> = {
+  erstkontakt: {
+    id: 'erstkontakt',
+    label: 'Erstkontakt',
+    color: 'bg-slate-100 text-slate-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['bedarfsanalyse', 'wiedervorlage', 'verloren'],
+  },
+  bedarfsanalyse: {
+    id: 'bedarfsanalyse',
+    label: 'Bewertung der Schutzrechte',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['konzept_erstellt', 'wiedervorlage', 'verloren'],
+  },
+  konzept_erstellt: {
+    id: 'konzept_erstellt',
+    label: 'Vertragsentwurf erstellt',
+    color: 'bg-cyan-100 text-cyan-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['beratungsgespraech', 'wiedervorlage', 'verloren'],
+  },
+  beratungsgespraech: {
+    id: 'beratungsgespraech',
+    label: 'Beratungsgespräch geführt',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['umsetzung', 'wiedervorlage', 'verloren'],
+  },
+  umsetzung: {
+    id: 'umsetzung',
+    label: 'Verhandlung mit Gegenseite',
+    color: 'bg-violet-100 text-violet-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['handelsregister', 'wiedervorlage', 'verloren'],
+  },
+  handelsregister: {
+    id: 'handelsregister',
+    label: 'Unterzeichnung',
+    color: 'bg-amber-100 text-amber-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['abgeschlossen', 'wiedervorlage'],
+  },
+  abgeschlossen: {
+    id: 'abgeschlossen',
+    label: 'Abgeschlossen',
+    color: 'bg-emerald-100 text-emerald-700',
+    isTerminal: true,
+    isMainPath: true,
+    next: [],
+  },
+  wiedervorlage: {
+    id: 'wiedervorlage',
+    label: 'Wiedervorlage / ruht',
+    color: 'bg-orange-100 text-orange-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: [
+      'erstkontakt',
+      'bedarfsanalyse',
+      'konzept_erstellt',
+      'beratungsgespraech',
+      'umsetzung',
+      'handelsregister',
+      'verloren',
+    ],
+  },
+  verloren: {
+    id: 'verloren',
+    label: 'Verloren / Kein Interesse',
+    color: 'bg-rose-100 text-rose-700',
+    isTerminal: true,
+    isMainPath: false,
+    next: [],
+  },
+}
+
+export const BETRIEBSFORMEN_HAUPTPFAD = [
+  'erstkontakt',
+  'bedarfsanalyse',
+  'konzept_erstellt',
+  'beratungsgespraech',
+  'umsetzung',
+  'handelsregister',
+  'abgeschlossen',
+]
+
+// ==========================================================================
+// STATUSNETZ — AKADEMIE
+// ==========================================================================
+
+export const AKADEMIE_STATUS: Record<string, StatusNode> = {
+  interessent: {
+    id: 'interessent',
+    label: 'Auftrag eingegangen',
+    color: 'bg-slate-100 text-slate-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['anmeldung_eingegangen', 'wiedervorlage', 'verloren'],
+  },
+  anmeldung_eingegangen: {
+    id: 'anmeldung_eingegangen',
+    label: 'Darstellungen in Arbeit',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['platz_bestaetigt', 'wiedervorlage', 'verloren'],
+  },
+  platz_bestaetigt: {
+    id: 'platz_bestaetigt',
+    label: 'Anmeldung vorbereitet',
+    color: 'bg-cyan-100 text-cyan-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['kurs_laeuft', 'wiedervorlage', 'verloren'],
+  },
+  kurs_laeuft: {
+    id: 'kurs_laeuft',
+    label: 'Design angemeldet',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['abgeschlossen', 'wiedervorlage'],
+  },
+  abgeschlossen: {
+    id: 'abgeschlossen',
+    label: 'Eingetragen',
+    color: 'bg-emerald-100 text-emerald-700',
+    isTerminal: true,
+    isMainPath: true,
+    next: [],
+  },
+  wiedervorlage: {
+    id: 'wiedervorlage',
+    label: 'Wiedervorlage / ruht',
+    color: 'bg-orange-100 text-orange-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: ['interessent', 'anmeldung_eingegangen', 'platz_bestaetigt', 'kurs_laeuft', 'verloren'],
+  },
+  verloren: {
+    id: 'verloren',
+    label: 'Abgebrochen / Kein Interesse',
+    color: 'bg-rose-100 text-rose-700',
+    isTerminal: true,
+    isMainPath: false,
+    next: [],
+  },
+}
+
+export const AKADEMIE_HAUPTPFAD = [
+  'interessent',
+  'anmeldung_eingegangen',
+  'platz_bestaetigt',
+  'kurs_laeuft',
+  'abgeschlossen',
+]
+
+// ==========================================================================
+// STATUSNETZ — FINANZIERUNGEN (VERMÖGENSANLAGEN)
+// ==========================================================================
+
+export const FINANZIERUNGEN_STATUS: Record<string, StatusNode> = {
+  interessent: {
+    id: 'interessent',
+    label: 'Erfindungsmeldung eingegangen',
+    color: 'bg-slate-100 text-slate-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['risikoprofil_erstellt', 'wiedervorlage', 'verloren'],
+  },
+  risikoprofil_erstellt: {
+    id: 'risikoprofil_erstellt',
+    label: 'Inanspruchnahme geprüft',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['beratungsgespraech', 'wiedervorlage', 'verloren'],
+  },
+  beratungsgespraech: {
+    id: 'beratungsgespraech',
+    label: 'Beratungsgespräch geführt',
+    color: 'bg-cyan-100 text-cyan-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['zeichnung_eingegangen', 'wiedervorlage', 'verloren'],
+  },
+  zeichnung_eingegangen: {
+    id: 'zeichnung_eingegangen',
+    label: 'Vergütung berechnet',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['kapital_eingezahlt', 'wiedervorlage', 'verloren'],
+  },
+  kapital_eingezahlt: {
+    id: 'kapital_eingezahlt',
+    label: 'Einigung erzielt',
+    color: 'bg-violet-100 text-violet-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['abgeschlossen', 'wiedervorlage'],
+  },
+  abgeschlossen: {
+    id: 'abgeschlossen',
+    label: 'Abgeschlossen',
+    color: 'bg-emerald-100 text-emerald-700',
+    isTerminal: true,
+    isMainPath: true,
+    next: [],
+  },
+  wiedervorlage: {
+    id: 'wiedervorlage',
+    label: 'Wiedervorlage / ruht',
+    color: 'bg-orange-100 text-orange-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: [
+      'interessent',
+      'risikoprofil_erstellt',
+      'beratungsgespraech',
+      'zeichnung_eingegangen',
+      'kapital_eingezahlt',
+      'verloren',
+    ],
+  },
+  verloren: {
+    id: 'verloren',
+    label: 'Verloren / Kein Interesse',
+    color: 'bg-rose-100 text-rose-700',
+    isTerminal: true,
+    isMainPath: false,
+    next: [],
+  },
+}
+
+export const FINANZIERUNGEN_HAUPTPFAD = [
+  'interessent',
+  'risikoprofil_erstellt',
+  'beratungsgespraech',
+  'zeichnung_eingegangen',
+  'kapital_eingezahlt',
+  'abgeschlossen',
+]
+
+// ==========================================================================
+// STATUSNETZ — PRIVAT (eigene Kontakte/Termine, pro Mitarbeiter isoliert)
+// ==========================================================================
+
+export const PRIVAT_STATUS: Record<string, StatusNode> = {
+  neu: {
+    id: 'neu',
+    label: 'Neu',
+    color: 'bg-slate-100 text-slate-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['in_kontakt', 'wiedervorlage', 'abgebrochen'],
+  },
+  in_kontakt: {
+    id: 'in_kontakt',
+    label: 'In Kontakt',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['termin_vereinbart', 'wiedervorlage', 'abgebrochen'],
+  },
+  termin_vereinbart: {
+    id: 'termin_vereinbart',
+    label: 'Termin vereinbart',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['erledigt', 'wiedervorlage', 'abgebrochen'],
+  },
+  erledigt: {
+    id: 'erledigt',
+    label: 'Erledigt',
+    color: 'bg-emerald-100 text-emerald-700',
+    isTerminal: true,
+    isMainPath: true,
+    next: [],
+  },
+  wiedervorlage: {
+    id: 'wiedervorlage',
+    label: 'Wiedervorlage / ruht',
+    color: 'bg-orange-100 text-orange-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: ['neu', 'in_kontakt', 'termin_vereinbart', 'abgebrochen'],
+  },
+  abgebrochen: {
+    id: 'abgebrochen',
+    label: 'Abgebrochen / Nicht weiter verfolgt',
+    color: 'bg-rose-100 text-rose-700',
+    isTerminal: true,
+    isMainPath: false,
+    next: [],
+  },
+}
+
+export const PRIVAT_HAUPTPFAD = ['neu', 'in_kontakt', 'termin_vereinbart', 'erledigt']
+
+// ==========================================================================
+// STATUSNETZ — IMMOBILIEN-KUNDEN (Interessenten/Eigentümer-Kontakte, getrennt vom Objekt-Status
+// oben, der weiterhin unter dem Bereichs-Key "immobilien" läuft — siehe KundeBereich-Kommentar in
+// types/index.ts)
+// ==========================================================================
+
+export const IMMOBILIEN_KUNDEN_STATUS: Record<string, StatusNode> = {
+  interessent: {
+    id: 'interessent',
+    label: 'Interessent / Erstkontakt',
+    color: 'bg-slate-100 text-slate-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['besichtigung', 'wiedervorlage', 'verloren'],
+  },
+  besichtigung: {
+    id: 'besichtigung',
+    label: 'Besichtigung vereinbart',
+    color: 'bg-sky-100 text-sky-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['angebot', 'wiedervorlage', 'verloren'],
+  },
+  angebot: {
+    id: 'angebot',
+    label: 'Angebot abgegeben',
+    color: 'bg-indigo-100 text-indigo-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['verhandlung', 'wiedervorlage', 'verloren'],
+  },
+  verhandlung: {
+    id: 'verhandlung',
+    label: 'In Verhandlung',
+    color: 'bg-violet-100 text-violet-700',
+    isTerminal: false,
+    isMainPath: true,
+    next: ['abgeschlossen', 'wiedervorlage', 'verloren'],
+  },
+  abgeschlossen: {
+    id: 'abgeschlossen',
+    label: 'Abgeschlossen',
+    color: 'bg-emerald-100 text-emerald-700',
+    isTerminal: true,
+    isMainPath: true,
+    next: [],
+  },
+  wiedervorlage: {
+    id: 'wiedervorlage',
+    label: 'Wiedervorlage / ruht',
+    color: 'bg-orange-100 text-orange-700',
+    isTerminal: false,
+    isMainPath: false,
+    next: ['interessent', 'besichtigung', 'angebot', 'verhandlung', 'verloren'],
+  },
+  verloren: {
+    id: 'verloren',
+    label: 'Verloren / Kein Interesse',
+    color: 'bg-rose-100 text-rose-700',
+    isTerminal: true,
+    isMainPath: false,
+    next: [],
+  },
+}
+
+export const IMMOBILIEN_KUNDEN_HAUPTPFAD = ['interessent', 'besichtigung', 'angebot', 'verhandlung', 'abgeschlossen']
+
+type StatusBereich =
+  | 'beratung'
+  | 'immobilien'
+  | 'immobilienkunden'
+  | 'erben'
+  | 'betriebsuebergabe'
+  | 'betriebsformen'
+  | 'akademie'
+  | 'finanzierungen'
+  | 'privat'
+
+export function getStatusMap(bereich: StatusBereich): Record<string, StatusNode> {
+  if (bereich === 'beratung') return BERATUNG_STATUS
+  if (bereich === 'immobilien') return IMMOBILIEN_STATUS
+  if (bereich === 'immobilienkunden') return IMMOBILIEN_KUNDEN_STATUS
+  if (bereich === 'erben') return ERBEN_STATUS
+  if (bereich === 'betriebsuebergabe') return BETRIEBSUEBERGABE_STATUS
+  if (bereich === 'betriebsformen') return BETRIEBSFORMEN_STATUS
+  if (bereich === 'akademie') return AKADEMIE_STATUS
+  if (bereich === 'privat') return PRIVAT_STATUS
+  return FINANZIERUNGEN_STATUS
+}
+
+export function getHauptpfad(bereich: StatusBereich): string[] {
+  if (bereich === 'beratung') return BERATUNG_HAUPTPFAD
+  if (bereich === 'immobilien') return IMMOBILIEN_HAUPTPFAD
+  if (bereich === 'immobilienkunden') return IMMOBILIEN_KUNDEN_HAUPTPFAD
+  if (bereich === 'erben') return ERBEN_HAUPTPFAD
+  if (bereich === 'betriebsuebergabe') return BETRIEBSUEBERGABE_HAUPTPFAD
+  if (bereich === 'betriebsformen') return BETRIEBSFORMEN_HAUPTPFAD
+  if (bereich === 'akademie') return AKADEMIE_HAUPTPFAD
+  if (bereich === 'privat') return PRIVAT_HAUPTPFAD
+  return FINANZIERUNGEN_HAUPTPFAD
+}
+
+// Ermittelt den nächsten Hauptpfad-Knoten für den "Weiter →"-Button
+export function getNextMainStep(bereich: StatusBereich, currentId: string): string | null {
+  const pfad = getHauptpfad(bereich)
+  const map = getStatusMap(bereich)
+  const idx = pfad.indexOf(currentId)
+  if (idx !== -1 && idx < pfad.length - 1) {
+    const nextId = pfad[idx + 1]
+    if (map[currentId]?.next.includes(nextId)) return nextId
+  }
+  // Fallback: falls aktueller Status nicht im Hauptpfad ist (z.B. Wiedervorlage/On Hold),
+  // nimm den ersten erlaubten Folgeknoten, der selbst im Hauptpfad liegt.
+  const node = map[currentId]
+  if (!node) return null
+  const mainPathNext = node.next.find((n) => pfad.includes(n))
+  return mainPathNext ?? node.next[0] ?? null
+}
